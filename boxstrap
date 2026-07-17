@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # boxstrap — interactive VPS provisioner + service manager.
 #
-#   sudo ./boxstrap            Provision the host once, then register / deploy /
-#                              (Slice B) manage docker-compose services, menu-driven.
-#   sudo ./boxstrap --dry-run  Show every action without changing the system.
+#   sudo ./boxstrap                    Interactive: provision host once, then
+#                                      register / adopt / manage services.
+#   sudo ./boxstrap <action> [name]    Run one action on a registered service:
+#                                        list status update restart logs
+#                                        stop remove deploy
+#   sudo ./boxstrap --dry-run [...]    Show actions without changing anything.
 #
-# Scriptable one-shot (non-interactive / CI): ./bootstrap.sh --config <file>
+# Scriptable one-shot deploy (CI): ./bootstrap.sh --config <file>
 set -euo pipefail
 
 BOXSTRAP_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +18,6 @@ export BOXSTRAP_NONINTERACTIVE=false
 
 # shellcheck source=lib/util.sh
 source "$BOXSTRAP_ROOT/lib/util.sh"
-# Phase functions (00-80) + the interactive layer.
 for _f in "$BOXSTRAP_ROOT"/lib/[0-9]*.sh \
           "$BOXSTRAP_ROOT"/lib/menu.sh \
           "$BOXSTRAP_ROOT"/lib/registry.sh \
@@ -31,27 +33,52 @@ usage() {
 boxstrap — provision a VPS once, then register and manage docker-compose services.
 
 Usage:
-  sudo ./boxstrap [--dry-run]
+  sudo ./boxstrap                     interactive menu (provision, register, manage)
+  sudo ./boxstrap <action> [name]     run one action, then exit
+  sudo ./boxstrap --dry-run [...]     print actions without changing anything
 
-  With no arguments it runs interactively: it provisions the host on first run,
-  then lets you register a service (or adopt one already deployed here) and
-  bring it up behind TLS.
+Actions (on a registered service):
+  list                 list registered services
+  status  <name>       docker compose ps + health check
+  update  <name>       pull the new image + recreate + health check
+  restart <name>       restart the service
+  logs    <name>       follow the service's logs
+  stop    <name>       stop the service (stays registered)
+  remove  <name>       unregister (optionally stop + remove containers)
+  deploy  <name>       (re)deploy a registered service from scratch
 
 Options:
   --dry-run    Print every action without changing the system.
   -h, --help   Show this help.
-
-For non-interactive / CI use, run:  ./bootstrap.sh --config stacks/<name>.conf
 EOF
 }
 
+ACTION="" NAME=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) BOXSTRAP_DRY_RUN=true; shift ;;
     -h|--help) usage; exit 0 ;;
-    *)         usage; die "unknown argument: $1" ;;
+    -*)        usage; die "unknown option: $1" ;;
+    *)         if [[ -z "$ACTION" ]]; then ACTION="$1"; else NAME="$1"; fi; shift ;;
   esac
 done
+
+bs_manage_menu() {
+  local name="$1" action
+  while true; do
+    action="$(menu_choose "Manage: $name" \
+      "Update (pull new image)" "Restart" "Status" "Logs" "Stop" "Remove" "Back")" || return 0
+    case "$action" in
+      "Update (pull new image)") bs_svc_update  "$name" || true ;;
+      "Restart")                 bs_svc_restart "$name" || true ;;
+      "Status")                  bs_svc_status  "$name" || true ;;
+      "Logs")                    bs_svc_logs    "$name" || true ;;
+      "Stop")                    bs_svc_stop    "$name" || true ;;
+      "Remove")                  bs_svc_remove  "$name" || true; return 0 ;;
+      *)                         return 0 ;;
+    esac
+  done
+}
 
 bs_main_menu() {
   while true; do
@@ -61,26 +88,53 @@ bs_main_menu() {
 
     if [[ ${#svcs[@]} -eq 0 ]]; then
       log_info "No services registered yet."
-      if confirm "Register a service now?"; then bs_register_flow; else break; fi
+      if confirm "Register a service now?"; then bs_register_flow || true; else break; fi
       continue
     fi
 
-    log_info "Registered services: ${svcs[*]}"
+    local -a opts=() s
+    for s in "${svcs[@]}"; do opts+=("Manage: $s"); done
+    opts+=("Register a new service" "Quit")
+
     local choice
-    choice="$(menu_choose "What do you want to do?" "Register a new service" "Quit")" || break
+    choice="$(menu_choose "boxstrap — pick a service or action" "${opts[@]}")" || break
     case "$choice" in
-      "Register a new service") bs_register_flow ;;
-      *) break ;;
+      "Register a new service") bs_register_flow || true ;;
+      "Quit")                   break ;;
+      "Manage: "*)              bs_manage_menu "${choice#Manage: }" ;;
     esac
   done
 }
 
+bs_run_action() {
+  local action="$1" name="${2:-}"
+  case "$action" in
+    list)    reg_list ;;
+    status)  [[ -n "$name" ]] || die "usage: boxstrap status <name>";  bs_svc_status   "$name" ;;
+    update)  [[ -n "$name" ]] || die "usage: boxstrap update <name>";  bs_svc_update   "$name" ;;
+    restart) [[ -n "$name" ]] || die "usage: boxstrap restart <name>"; bs_svc_restart  "$name" ;;
+    logs)    [[ -n "$name" ]] || die "usage: boxstrap logs <name>";    bs_svc_logs     "$name" ;;
+    stop)    [[ -n "$name" ]] || die "usage: boxstrap stop <name>";    bs_svc_stop     "$name" ;;
+    remove)  [[ -n "$name" ]] || die "usage: boxstrap remove <name>";  bs_svc_remove   "$name" ;;
+    deploy)  [[ -n "$name" ]] || die "usage: boxstrap deploy <name>";  bs_deploy_stack "$name" ;;
+    *)       usage; die "unknown action: $action" ;;
+  esac
+}
+
 main() {
   require_root
+  bs_preflight
+
+  # One-shot action mode.
+  if [[ -n "$ACTION" ]]; then
+    bs_run_action "$ACTION" "$NAME"
+    return
+  fi
+
+  # Interactive mode.
   local tag=""
   [[ "$BOXSTRAP_DRY_RUN" == "true" ]] && tag=" (dry-run)"
   log_step "boxstrap$tag"
-  bs_preflight
   ensure_host_provisioned
   bs_main_menu
   log_ok "Done."
