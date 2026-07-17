@@ -1,0 +1,11 @@
+# Real stack configs describe YOUR infrastructure — never commit them.
+# Only the *.conf.example template is tracked (it does not end in .conf).
+stacks/*.conf
+
+# Local environment / secret files
+.env
+*.env
+
+# OS / editor cruft
+.DS_Store
+*.swp

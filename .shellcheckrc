@@ -1,0 +1,6 @@
+# boxstrap shellcheck config
+# Phase libraries are sourced by bootstrap.sh, so config/util vars look "unused"
+# or "undefined" to shellcheck when a file is linted in isolation.
+external-sources=true
+# SC1091: don't try to follow sourced files that only exist at deploy time.
+disable=SC1091
