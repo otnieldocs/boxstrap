@@ -36,7 +36,6 @@ bs_app_fetch() {
     log_info "Cloning $repo -> $dir"
     bs_run git clone "$repo" "$dir"
   fi
-  bs_run chown -R "$user:$user" "$dir"
 
   # 3. Scaffold .env (secrets generated where configured; chmod 600).
   bs__scaffold_env "$dir"
@@ -46,6 +45,10 @@ bs_app_fetch() {
     bs_run_sh "sed -i 's/{{DOMAIN}}/${BOXSTRAP_DOMAIN}/g' '$dir/Caddyfile'"
     log_ok "Caddyfile domain set to ${BOXSTRAP_DOMAIN}"
   fi
+
+  # Own everything as the deploy user LAST — including the .env created above —
+  # so the app can read it regardless of which user ends up running compose.
+  bs_run chown -R "$user:$user" "$dir"
 }
 
 # bs__scaffold_env DIR — create DIR/.env from .env.example and fill generated
