@@ -9,6 +9,31 @@ UI/daemon). It detects your stack from its dependency manifests, applies the
 **host-level** settings containers can't set for themselves, and brings the app up
 behind TLS — stopping at a health gate. Wiring, canary, and cutover stay manual.
 
+## What makes boxstrap different
+
+Most tools either configure servers *or* deploy apps — and none of them look at
+your app to decide what the **host** needs. boxstrap does two things nothing else does:
+
+**App-aware host tuning (shipped).** It reads your dependency manifests, infers the
+stack, and applies the kernel/daemon settings a container can't set for itself — then
+explains *why*. Your `requirements.txt` has `redis`? It disables Transparent Huge
+Pages and sets `vm.overcommit_memory=1`, and tells you those exist and what they
+prevent. Ansible would happily run this setup too — but only if *you* already knew to
+write it.
+
+**App-aware capacity preflight (planned).** Before it deploys, boxstrap will
+cross-reference your compose file's resource demands — replica counts, `mem_limit`s,
+browser-worker concurrency — against the box's *actual* RAM, CPU, swap, and
+cgroup/kernel capabilities, and warn you *before* something OOM-kills at 3 a.m.:
+
+- *"Your compose runs 3 Chromium workers ≈ 3 GB, but this box has 2 GB — reduce
+  concurrency or add swap."*
+- *"You set `memswap_limit`, but this kernel has no swap-limit accounting — it
+  won't apply."*
+
+Every other tool deploys exactly what you tell it and lets the box fall over.
+**Nothing else checks whether your app actually fits the server it's landing on.**
+
 ## Usage
 
 ```bash
