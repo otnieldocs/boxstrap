@@ -1,0 +1,49 @@
+# boxstrap stack config — EXAMPLE TEMPLATE
+#
+# Copy this file to a real config and edit it:
+#     cp stacks/stack.conf.example stacks/my-app.conf
+#     $EDITOR stacks/my-app.conf
+#     sudo ./bootstrap.sh --config stacks/my-app.conf --dry-run
+#
+# Real *.conf files are gitignored — they describe YOUR infrastructure. This
+# .example is the only stack file tracked in git. Secrets are NEVER stored in
+# either: they are prompted or generated at run time and written only to the
+# app's .env (chmod 600).
+
+# ── Host / hardening ────────────────────────────────────────────────────────
+BOXSTRAP_DEPLOY_USER=deploy
+BOXSTRAP_TIMEZONE=UTC
+BOXSTRAP_SWAP_GB=4                      # host swap file size (GB)
+BOXSTRAP_SSH_DISABLE_PASSWORD=true      # key-only SSH (lockout-guarded)
+BOXSTRAP_UFW_ALLOW="22,80,443"          # SSH + your TLS reverse proxy
+
+# ── App / stack ─────────────────────────────────────────────────────────────
+BOXSTRAP_APP_NAME=my-app
+BOXSTRAP_APP_REPO="git@github.com:you/your-app.git"   # repo holding your compose files
+BOXSTRAP_APP_DIR="/opt/my-app"
+BOXSTRAP_COMPOSE_FILES="docker-compose.yml docker-compose.prod.yml"
+
+# Optional: force host tuning before the repo is cloned (detection also runs
+# after the clone and prints a report). Set true if you already know the stack.
+# BOXSTRAP_FORCE_REDIS_TUNING=true       # Redis    -> overcommit + THP disable
+# BOXSTRAP_FORCE_BROWSER=true            # Chromium -> shm_size / ipc:host / init:true
+
+# ── Container registry (registry-pull; image is built in CI, not on the box) ─
+BOXSTRAP_REGISTRY_HOST="registry.example.com"          # e.g. ghcr.io, registry.gitlab.com
+# BOXSTRAP_REGISTRY_USER / BOXSTRAP_REGISTRY_TOKEN are supplied via prompt or env
+# (a read-only registry token). The image path itself lives in your compose file.
+
+# ── Secrets to auto-generate into the app's .env ────────────────────────────
+# "VAR:hex:N" — N random bytes hex-encoded, written into .env at run time.
+# BOXSTRAP_SECRETS_GENERATE="MY_SERVICE_KEY:hex:32"
+
+# ── TLS front door ──────────────────────────────────────────────────────────
+BOXSTRAP_TLS_PROVIDER=caddy
+# Point this domain's DNS A-record at the VPS IP BEFORE running (Caddy issues a
+# certificate via an HTTP-01 challenge on port 80).
+BOXSTRAP_DOMAIN="app.example.com"
+
+# ── Health gate ─────────────────────────────────────────────────────────────
+BOXSTRAP_HEALTH_URL="https://app.example.com/healthz"
+BOXSTRAP_HEALTH_EXPECT='"status":"ok"'
+BOXSTRAP_PROTECTED_URL="https://app.example.com/v1/protected"
