@@ -33,15 +33,20 @@ BOXSTRAP_REGISTRY_HOST="registry.example.com"          # e.g. ghcr.io, registry.
 # BOXSTRAP_REGISTRY_USER / BOXSTRAP_REGISTRY_TOKEN are supplied via prompt or env
 # (a read-only registry token). The image path itself lives in your compose file.
 
-# ── Secrets to auto-generate into the app's .env ────────────────────────────
-# "VAR:hex:N" — N random bytes hex-encoded, written into .env at run time.
+# ── Secrets into the app's .env ─────────────────────────────────────────────
+# Auto-generated: "VAR:hex:N" — N random bytes hex-encoded, written at run time.
 # BOXSTRAP_SECRETS_GENERATE="MY_SERVICE_KEY:hex:32"
+# Prompted: space-separated var names boxstrap asks for and writes (e.g. proxy
+# or third-party creds). Values are never stored in this file.
+# BOXSTRAP_SECRETS_PROMPT="PROXY_USERNAME PROXY_PASSWORD"
 
 # ── TLS front door ──────────────────────────────────────────────────────────
+# boxstrap GENERATES the Caddyfile from these — the app repo needn't ship one.
 BOXSTRAP_TLS_PROVIDER=caddy
 # Point this domain's DNS A-record at the VPS IP BEFORE running (Caddy issues a
 # certificate via an HTTP-01 challenge on port 80).
 BOXSTRAP_DOMAIN="app.example.com"
+BOXSTRAP_TLS_UPSTREAM="api:8000"        # compose service:port Caddy proxies to
 
 # ── Health gate ─────────────────────────────────────────────────────────────
 BOXSTRAP_HEALTH_URL="https://app.example.com/healthz"

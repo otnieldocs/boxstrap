@@ -75,6 +75,18 @@ write_file() {
   printf '%s' "$content" > "$file"
 }
 
+# env_set FILE VAR VALUE — set VAR=VALUE in an env file (replace the line if
+# present, else append), preserving the file's permissions. VALUE may contain
+# any characters (no sed interpolation, so passwords with / & | are safe).
+env_set() {
+  local file="$1" var="$2" val="$3" tmp
+  tmp="$(mktemp)"
+  grep -v "^${var}=" "$file" > "$tmp" 2>/dev/null || true
+  printf '%s=%s\n' "$var" "$val" >> "$tmp"
+  cat "$tmp" > "$file"   # overwrite content, keep the original file's perms/inode
+  rm -f "$tmp"
+}
+
 # is_interactive — true unless --non-interactive was passed.
 is_interactive() { [[ "${BOXSTRAP_NONINTERACTIVE:-false}" != "true" ]]; }
 

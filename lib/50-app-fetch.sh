@@ -40,10 +40,13 @@ bs_app_fetch() {
   # 3. Scaffold .env (secrets generated where configured; chmod 600).
   bs__scaffold_env "$dir"
 
-  # 4. Render the Caddy domain placeholder, if this stack fronts with Caddy.
-  if [[ "${BOXSTRAP_TLS_PROVIDER:-}" == "caddy" && -n "${BOXSTRAP_DOMAIN:-}" && -f "$dir/Caddyfile" ]]; then
-    bs_run_sh "sed -i 's/{{DOMAIN}}/${BOXSTRAP_DOMAIN}/g' '$dir/Caddyfile'"
-    log_ok "Caddyfile domain set to ${BOXSTRAP_DOMAIN}"
+  # 4. Generate the Caddy config from the stack settings. boxstrap owns this, so
+  #    a missing/uncommitted Caddyfile in the app repo can never break the deploy.
+  if [[ "${BOXSTRAP_TLS_PROVIDER:-}" == "caddy" && -n "${BOXSTRAP_DOMAIN:-}" ]]; then
+    local upstream="${BOXSTRAP_TLS_UPSTREAM:-api:8000}"
+    write_file "$dir/Caddyfile" \
+      "$(printf '%s {\n\treverse_proxy %s\n\tencode gzip\n}\n' "$BOXSTRAP_DOMAIN" "$upstream")"
+    log_ok "Generated Caddyfile (${BOXSTRAP_DOMAIN} -> ${upstream})"
   fi
 
   # Own everything as the deploy user LAST — including the .env created above —
@@ -81,9 +84,22 @@ bs__scaffold_env() {
     if is_dry; then
       log "[dry-run] set generated secret $var in .env"
     else
-      sed -i "s|^${var}=.*|${var}=${val}|" "$envf"
+      env_set "$envf" "$var" "$val"
       log_ok "Generated $var (set the same value on the caller side if it is shared)"
     fi
   done
-  log_warn "Review $dir/.env and fill any remaining secrets (e.g. proxy credentials)."
+
+  # Prompt for app-supplied secrets (proxy creds, etc.) declared by the stack.
+  local pvar pval
+  for pvar in ${BOXSTRAP_SECRETS_PROMPT:-}; do
+    pval=""
+    prompt_secret pval "Value for $pvar (blank = fill in later)"
+    [[ -z "$pval" ]] && continue
+    if is_dry; then
+      log "[dry-run] set prompted secret $pvar in .env"
+    else
+      env_set "$envf" "$pvar" "$pval"
+      log_ok "Set $pvar"
+    fi
+  done
 }
