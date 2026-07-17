@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# boxstrap — interactive VPS provisioner + service manager.
+#
+#   sudo ./boxstrap            Provision the host once, then register / deploy /
+#                              (Slice B) manage docker-compose services, menu-driven.
+#   sudo ./boxstrap --dry-run  Show every action without changing the system.
+#
+# Scriptable one-shot (non-interactive / CI): ./bootstrap.sh --config <file>
+set -euo pipefail
+
+BOXSTRAP_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export BOXSTRAP_ROOT
+export BOXSTRAP_DRY_RUN="${BOXSTRAP_DRY_RUN:-false}"
+export BOXSTRAP_NONINTERACTIVE=false
+
+# shellcheck source=lib/util.sh
+source "$BOXSTRAP_ROOT/lib/util.sh"
+# Phase functions (00-80) + the interactive layer.
+for _f in "$BOXSTRAP_ROOT"/lib/[0-9]*.sh \
+          "$BOXSTRAP_ROOT"/lib/menu.sh \
+          "$BOXSTRAP_ROOT"/lib/registry.sh \
+          "$BOXSTRAP_ROOT"/lib/lifecycle.sh \
+          "$BOXSTRAP_ROOT"/lib/register.sh; do
+  # shellcheck disable=SC1090
+  source "$_f"
+done
+unset _f
+
+usage() {
+  cat <<'EOF'
+boxstrap — provision a VPS once, then register and manage docker-compose services.
+
+Usage:
+  sudo ./boxstrap [--dry-run]
+
+  With no arguments it runs interactively: it provisions the host on first run,
+  then lets you register a service (or adopt one already deployed here) and
+  bring it up behind TLS.
+
+Options:
+  --dry-run    Print every action without changing the system.
+  -h, --help   Show this help.
+
+For non-interactive / CI use, run:  ./bootstrap.sh --config stacks/<name>.conf
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) BOXSTRAP_DRY_RUN=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *)         usage; die "unknown argument: $1" ;;
+  esac
+done
+
+bs_main_menu() {
+  while true; do
+    local -a svcs=()
+    local line
+    while IFS= read -r line; do [[ -n "$line" ]] && svcs+=("$line"); done < <(reg_list)
+
+    if [[ ${#svcs[@]} -eq 0 ]]; then
+      log_info "No services registered yet."
+      if confirm "Register a service now?"; then bs_register_flow; else break; fi
+      continue
+    fi
+
+    log_info "Registered services: ${svcs[*]}"
+    local choice
+    choice="$(menu_choose "What do you want to do?" "Register a new service" "Quit")" || break
+    case "$choice" in
+      "Register a new service") bs_register_flow ;;
+      *) break ;;
+    esac
+  done
+}
+
+main() {
+  require_root
+  local tag=""
+  [[ "$BOXSTRAP_DRY_RUN" == "true" ]] && tag=" (dry-run)"
+  log_step "boxstrap$tag"
+  bs_preflight
+  ensure_host_provisioned
+  bs_main_menu
+  log_ok "Done."
+}
+
+main
