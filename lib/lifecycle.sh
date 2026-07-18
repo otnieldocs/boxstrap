@@ -58,7 +58,10 @@ bs_deploy_stack() {
 # established at deploy time (persisted in root's docker config).
 bs_svc_update() {
   _svc_prep "$1" || return 1
-  [[ "${BS_REFRESH:-false}" == "true" ]] && _svc_refresh_files "$1"
+  # A failed refresh must ABORT — never pull a new image against stale manifests.
+  if [[ "${BS_REFRESH:-false}" == "true" ]]; then
+    _svc_refresh_files "$1" || return 1
+  fi
   log_step "Update: $1 (pull new image + recreate)"
   _compose pull || { log_err "pull failed — the registry login may have expired; re-deploy to re-authenticate."; return 1; }
   _compose up -d
@@ -76,11 +79,25 @@ _svc_refresh_files() {
   if [[ -d "$dir/.git" ]]; then
     owner="$(stat -c '%U' "$dir" 2>/dev/null || echo root)"
     log_info "Refreshing $1: git pull ($dir, as $owner)"
+    # boxstrap owns the generated Caddyfile and writes it INTO the repo tree, so
+    # discard any local change to it first — otherwise a dirty working tree blocks
+    # the fast-forward pull. It is regenerated below anyway.
+    local pull_cmd="cd '$dir' && { git checkout -- Caddyfile 2>/dev/null || true; } && git pull --ff-only"
+    local rc=0
     if is_dry; then
-      log "[dry-run] su - $owner -c 'cd $dir && git pull --ff-only'"
+      log "[dry-run] git pull --ff-only in $dir (as $owner)"
+    elif [[ "$(id -un)" == "$owner" ]]; then
+      # Already the owner (also lets this run in tests) — no su needed.
+      bash -c "$pull_cmd" || rc=$?
     else
-      su - "$owner" -c "cd '$dir' && git pull --ff-only" \
-        || log_warn "git pull failed — keeping the existing files"
+      su - "$owner" -c "$pull_cmd" || rc=$?
+    fi
+    # ABORT on a failed pull — deploying stale manifests silently is the bug this
+    # replaces (a failed pull used to only warn, then continue with old files).
+    if [[ $rc -ne 0 ]]; then
+      log_err "git pull failed in $dir — refusing to deploy stale manifests."
+      log_err "Resolve it (git -C '$dir' status; discard boxstrap-owned files with git -C '$dir' checkout -- .), then retry."
+      return 1
     fi
   fi
   bs_write_caddyfile "$dir"
