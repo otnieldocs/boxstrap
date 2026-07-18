@@ -47,6 +47,7 @@ Actions (on a registered service):
   stop    <name>       stop the service (stays registered)
   remove  <name>       unregister (optionally stop + remove containers)
   deploy  <name>       (re)deploy a registered service from scratch
+  edge                 re-render + reload the shared edge reverse proxy
   install              put a 'boxstrap' launcher on PATH (/usr/local/bin/boxstrap)
 
 Options:
@@ -124,6 +125,7 @@ bs_run_action() {
     stop)    [[ -n "$name" ]] || die "usage: boxstrap stop <name>";    bs_svc_stop     "$name" ;;
     remove)  [[ -n "$name" ]] || die "usage: boxstrap remove <name>";  bs_svc_remove   "$name" ;;
     deploy)  [[ -n "$name" ]] || die "usage: boxstrap deploy <name>";  bs_deploy_stack "$name" ;;
+    edge)    bs_edge_sync ;;
     install) bs_install_cli ;;
     *)       usage; die "unknown action: $action" ;;
   esac

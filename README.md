@@ -70,6 +70,7 @@ Run in order; each is idempotent and re-runnable:
 | `detect` | Infer the stack from manifests → print host implications (the teaching step) |
 | `kernel-tuning` | Redis-only: `vm.overcommit_memory=1` + disable Transparent Huge Pages |
 | `app-up` | `docker compose pull && up -d` as the deploy user (registry-pull, no on-box build) |
+| `edge` | Edge-mode stacks only: sync the shared reverse proxy (re-render + reload) |
 | `verify` | Poll the health URL; confirm auth returns 401 without a key |
 
 ## Why some things are on the host, not in the image
@@ -83,6 +84,29 @@ inherits a few kernel/OS settings from the host that it **cannot** change itself
 - **Swap**, **time sync**, and **Docker log rotation** are host concerns full stop.
 
 The `detect` phase prints exactly which of these apply to your stack and why.
+
+## Sharing a box: the edge proxy
+
+By default (`BOXSTRAP_TLS_PROVIDER=caddy`) each stack runs its **own** Caddy on
+`:80/:443`, so only one TLS-fronted app fits per box. To run **several** apps on
+one box behind a single front door, set `BOXSTRAP_TLS_PROVIDER=edge` on each and
+boxstrap manages a shared **edge proxy**:
+
+- One boxstrap-owned Caddy (a generated compose + aggregate Caddyfile under
+  `/opt/boxstrap-edge`) terminates TLS and routes every edge stack's domain.
+- The aggregate is re-rendered and hot-reloaded on every stack deploy / `update
+  --refresh` / remove — no downtime, no hand-edited Caddyfile.
+- Each app runs **no** Caddy. Its compose attaches the fronted service to the
+  external `boxstrap-edge` network with a stable alias, and the stack sets
+  `BOXSTRAP_TLS_UPSTREAM="<alias>:<port>"` so Caddy can reach it across projects.
+
+```bash
+sudo boxstrap edge      # manually re-render + reload the shared proxy
+```
+
+Mixing modes on one box isn't supported — the embedded-Caddy stack and the edge
+proxy would both claim `:80/:443`. Pick `edge` for every fronted stack on a
+shared box, or `caddy` for a single-app box.
 
 ## Config
 
