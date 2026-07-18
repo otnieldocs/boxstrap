@@ -14,6 +14,11 @@ bs_hardening() {
   fi
   bs_run usermod -aG sudo "$user"
 
+  # Passwordless sudo: the account has no password (--disabled-password) and
+  # password SSH is disabled, so a sudo password would be unusable. NOPASSWD is
+  # the standard key-only-admin pattern (you're already authenticated by SSH key).
+  bs__install_sudoers "$user"
+
   # 2. Seed the user's SSH key from root BEFORE we disable password auth.
   if [[ -f /root/.ssh/authorized_keys ]]; then
     bs_run install -d -m 700 -o "$user" -g "$user" "/home/$user/.ssh"
@@ -71,4 +76,25 @@ ${pw_line}
   bs_run apt-get install -y unattended-upgrades
   bs_run systemctl enable --now unattended-upgrades 2>/dev/null || true
   log_ok "unattended-upgrades enabled"
+}
+
+# bs__install_sudoers USER — install a NOPASSWD sudoers drop-in, validated with
+# visudo BEFORE it goes live so a malformed file can never break sudo.
+bs__install_sudoers() {
+  local user="$1"
+  local f="/etc/sudoers.d/90-boxstrap-${user}"
+  if is_dry; then
+    printf '%s[dry-run]%s install NOPASSWD sudoers for %s -> %s\n' \
+      "$C_DIM" "$C_RESET" "$user" "$f"
+    return 0
+  fi
+  local tmp; tmp="$(mktemp)"
+  printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$user" > "$tmp"
+  if visudo -cf "$tmp" >/dev/null 2>&1; then
+    install -m 440 -o root -g root "$tmp" "$f"
+    log_ok "Passwordless sudo enabled for '$user'"
+  else
+    log_err "generated sudoers failed validation — not installing (sudo left unchanged)"
+  fi
+  rm -f "$tmp"
 }
