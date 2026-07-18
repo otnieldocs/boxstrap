@@ -47,6 +47,7 @@ Actions (on a registered service):
   stop    <name>       stop the service (stays registered)
   remove  <name>       unregister (optionally stop + remove containers)
   deploy  <name>       (re)deploy a registered service from scratch
+  set-domain <name> <domain>  change the stack's public domain + reload its proxy
   edge                 re-render + reload the shared edge reverse proxy
   install              put a 'boxstrap' launcher on PATH (/usr/local/bin/boxstrap)
 
@@ -59,7 +60,7 @@ EOF
 }
 
 # Note: use BS_-prefixed names; a bare NAME would be clobbered by /etc/os-release.
-BS_ACTION="" BS_NAME=""
+BS_ACTION="" BS_NAME="" BS_ARG3=""
 export BS_REFRESH=false  # read by lib/lifecycle.sh for `update --refresh`
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -67,7 +68,9 @@ while [[ $# -gt 0 ]]; do
     --refresh) BS_REFRESH=true; shift ;;
     -h|--help) usage; exit 0 ;;
     -*)        usage; die "unknown option: $1" ;;
-    *)         if [[ -z "$BS_ACTION" ]]; then BS_ACTION="$1"; else BS_NAME="$1"; fi; shift ;;
+    *)         if [[ -z "$BS_ACTION" ]]; then BS_ACTION="$1"
+               elif [[ -z "$BS_NAME" ]]; then BS_NAME="$1"
+               else BS_ARG3="$1"; fi; shift ;;
   esac
 done
 
@@ -75,14 +78,15 @@ bs_manage_menu() {
   local name="$1" action
   while true; do
     action="$(menu_choose "Manage: $name" \
-      "Update (pull new image)" "Restart" "Status" "Logs" "Stop" "Remove" "Back")" || return 0
+      "Update (pull new image)" "Restart" "Status" "Logs" "Change domain" "Stop" "Remove" "Back")" || return 0
     case "$action" in
-      "Update (pull new image)") bs_svc_update  "$name" || true ;;
-      "Restart")                 bs_svc_restart "$name" || true ;;
-      "Status")                  bs_svc_status  "$name" || true ;;
-      "Logs")                    bs_svc_logs    "$name" || true ;;
-      "Stop")                    bs_svc_stop    "$name" || true ;;
-      "Remove")                  bs_svc_remove  "$name" || true; return 0 ;;
+      "Update (pull new image)") bs_svc_update     "$name" || true ;;
+      "Restart")                 bs_svc_restart    "$name" || true ;;
+      "Status")                  bs_svc_status     "$name" || true ;;
+      "Logs")                    bs_svc_logs       "$name" || true ;;
+      "Change domain")           bs_svc_set_domain "$name" || true ;;
+      "Stop")                    bs_svc_stop       "$name" || true ;;
+      "Remove")                  bs_svc_remove     "$name" || true; return 0 ;;
       *)                         return 0 ;;
     esac
   done
@@ -125,6 +129,8 @@ bs_run_action() {
     stop)    [[ -n "$name" ]] || die "usage: boxstrap stop <name>";    bs_svc_stop     "$name" ;;
     remove)  [[ -n "$name" ]] || die "usage: boxstrap remove <name>";  bs_svc_remove   "$name" ;;
     deploy)  [[ -n "$name" ]] || die "usage: boxstrap deploy <name>";  bs_deploy_stack "$name" ;;
+    set-domain) [[ -n "$name" && -n "$BS_ARG3" ]] || die "usage: boxstrap set-domain <name> <new-domain>"
+                bs_set_domain "$name" "$BS_ARG3" ;;
     edge)    bs_edge_sync ;;
     install) bs_install_cli ;;
     *)       usage; die "unknown action: $action" ;;

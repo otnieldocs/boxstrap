@@ -108,6 +108,76 @@ bs_svc_logs() {
   _compose logs -f --tail=100 || true
 }
 
+# bs__rewrite_stack_domain NAME OLD NEW — replace the old host with the new one
+# everywhere in the registered config (BOXSTRAP_DOMAIN plus any HEALTH/PROTECTED
+# URL that embeds it), preserving comments and the file's 600 perms/inode.
+bs__rewrite_stack_domain() {
+  local name="$1" old="$2" new="$3" p; p="$(reg_path "$name")"
+  if is_dry; then
+    log "[dry-run] rewrite $p: $old -> $new (BOXSTRAP_DOMAIN + embedded URLs)"
+    return 0
+  fi
+  local tmp line; tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Quoted pattern => literal replacement (a domain has no glob metachars).
+    printf '%s\n' "${line//"$old"/"$new"}"
+  done < "$p" > "$tmp"
+  cat "$tmp" > "$p"   # overwrite content, keep the file's perms/inode
+  rm -f "$tmp"
+}
+
+# bs__reload_embedded_caddy NAME — regenerate the app's own Caddyfile from the
+# updated config and reload its Caddy so the new domain (and cert) take effect.
+bs__reload_embedded_caddy() {
+  local name="$1"
+  _svc_prep "$name" || return 1
+  bs_write_caddyfile "$BOXSTRAP_APP_DIR"
+  if is_dry; then
+    log "[dry-run] (cd $BOXSTRAP_APP_DIR && docker compose ${BS_COMPOSE_ARGS[*]} exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile)"
+    return 0
+  fi
+  if _compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; then
+    log_ok "Reloaded embedded Caddy for $name"
+  else
+    log_warn "Couldn't reload the 'caddy' service — recreating the stack to apply the new domain"
+    _compose up -d --force-recreate
+  fi
+}
+
+# bs_set_domain NAME NEW — change the public domain of a registered stack and
+# apply it live. Updates the config, warns about DNS, then reloads whichever
+# proxy fronts the stack (shared edge or the app's own Caddy).
+bs_set_domain() {
+  local name="$1" new="${2:-}"
+  [[ -n "$name" && -n "$new" ]] || { log_err "usage: boxstrap set-domain <name> <new-domain>"; return 1; }
+  reg_load "$name" || return 1
+  local old="${BOXSTRAP_DOMAIN:-}"
+  [[ -n "$old" ]] || { log_err "$name has no BOXSTRAP_DOMAIN — it isn't a TLS-fronted stack."; return 1; }
+  if [[ "$old" == "$new" ]]; then log_ok "$name already serves $new — nothing to change."; return 0; fi
+
+  log_step "Change domain: $name ($old -> $new)"
+  bs__rewrite_stack_domain "$name" "$old" "$new" || return 1
+  log_ok "Config updated: $(reg_path "$name")"
+  log_warn "DNS: point an A-record for $new at this box BEFORE it can get a cert (Caddy uses an HTTP-01 challenge on :80)."
+
+  reg_load "$name"   # re-source with the new values
+  case "${BOXSTRAP_TLS_PROVIDER:-}" in
+    edge)  bs_edge_sync ;;
+    caddy) bs__reload_embedded_caddy "$name" ;;
+    *)     log_warn "$name TLS provider is '${BOXSTRAP_TLS_PROVIDER:-none}' — config changed, but no proxy was reloaded." ;;
+  esac
+  log_ok "$name now serves $new. Update any dependent config yourself (e.g. callback URLs, an app's upstream base URL)."
+}
+
+# bs_svc_set_domain NAME — interactive wrapper: prompt for the new domain.
+bs_svc_set_domain() {
+  local name="$1" new=""
+  reg_load "$name" 2>/dev/null
+  prompt new "New domain for $name (current: ${BOXSTRAP_DOMAIN:-none})" "${BOXSTRAP_DOMAIN:-}"
+  [[ -n "$new" ]] || { log_info "Cancelled."; return 0; }
+  bs_set_domain "$name" "$new"
+}
+
 bs_svc_stop() {
   _svc_prep "$1" || return 1
   confirm "Stop '$1'? It goes offline until restarted." || { log_info "Cancelled."; return 0; }
