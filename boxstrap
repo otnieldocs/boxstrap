@@ -22,7 +22,8 @@ for _f in "$BOXSTRAP_ROOT"/lib/[0-9]*.sh \
           "$BOXSTRAP_ROOT"/lib/menu.sh \
           "$BOXSTRAP_ROOT"/lib/registry.sh \
           "$BOXSTRAP_ROOT"/lib/lifecycle.sh \
-          "$BOXSTRAP_ROOT"/lib/register.sh; do
+          "$BOXSTRAP_ROOT"/lib/register.sh \
+          "$BOXSTRAP_ROOT"/lib/install.sh; do
   # shellcheck disable=SC1090
   source "$_f"
 done
@@ -46,18 +47,23 @@ Actions (on a registered service):
   stop    <name>       stop the service (stays registered)
   remove  <name>       unregister (optionally stop + remove containers)
   deploy  <name>       (re)deploy a registered service from scratch
+  install              put a 'boxstrap' launcher on PATH (/usr/local/bin/boxstrap)
 
 Options:
   --dry-run    Print every action without changing the system.
+  --refresh    With 'update': also git-pull the app repo + regenerate the Caddyfile
+               before pulling the image (use when the compose file or TLS changed).
   -h, --help   Show this help.
 EOF
 }
 
 # Note: use BS_-prefixed names; a bare NAME would be clobbered by /etc/os-release.
 BS_ACTION="" BS_NAME=""
+export BS_REFRESH=false  # read by lib/lifecycle.sh for `update --refresh`
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) BOXSTRAP_DRY_RUN=true; shift ;;
+    --refresh) BS_REFRESH=true; shift ;;
     -h|--help) usage; exit 0 ;;
     -*)        usage; die "unknown option: $1" ;;
     *)         if [[ -z "$BS_ACTION" ]]; then BS_ACTION="$1"; else BS_NAME="$1"; fi; shift ;;
@@ -118,6 +124,7 @@ bs_run_action() {
     stop)    [[ -n "$name" ]] || die "usage: boxstrap stop <name>";    bs_svc_stop     "$name" ;;
     remove)  [[ -n "$name" ]] || die "usage: boxstrap remove <name>";  bs_svc_remove   "$name" ;;
     deploy)  [[ -n "$name" ]] || die "usage: boxstrap deploy <name>";  bs_deploy_stack "$name" ;;
+    install) bs_install_cli ;;
     *)       usage; die "unknown action: $action" ;;
   esac
 }

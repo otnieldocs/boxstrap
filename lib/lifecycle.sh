@@ -57,11 +57,32 @@ bs_deploy_stack() {
 # established at deploy time (persisted in root's docker config).
 bs_svc_update() {
   _svc_prep "$1" || return 1
+  [[ "${BS_REFRESH:-false}" == "true" ]] && _svc_refresh_files "$1"
   log_step "Update: $1 (pull new image + recreate)"
   _compose pull || { log_err "pull failed — the registry login may have expired; re-deploy to re-authenticate."; return 1; }
   _compose up -d
   _svc_health "$1"
   log_ok "$1 updated."
+}
+
+# _svc_refresh_files NAME — refresh the deploy manifests before an update (used by
+# `update --refresh`): git-pull the app repo (as its owner, to avoid git's
+# dubious-ownership guard and keep the tree owned consistently) and regenerate the
+# Caddyfile from the stack config. A plain `update` only pulls the image, so this is
+# how a changed docker-compose file or TLS setting reaches the box.
+_svc_refresh_files() {
+  local dir="$BOXSTRAP_APP_DIR" owner
+  if [[ -d "$dir/.git" ]]; then
+    owner="$(stat -c '%U' "$dir" 2>/dev/null || echo root)"
+    log_info "Refreshing $1: git pull ($dir, as $owner)"
+    if is_dry; then
+      log "[dry-run] su - $owner -c 'cd $dir && git pull --ff-only'"
+    else
+      su - "$owner" -c "cd '$dir' && git pull --ff-only" \
+        || log_warn "git pull failed — keeping the existing files"
+    fi
+  fi
+  bs_write_caddyfile "$dir"
 }
 
 bs_svc_restart() {
