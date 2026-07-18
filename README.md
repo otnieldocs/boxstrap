@@ -55,6 +55,44 @@ BOXSTRAP_REGISTRY_TOKEN=… sudo -E ./bootstrap.sh \
 sudo ./bootstrap.sh --config stacks/my-app.conf --only kernel-tuning
 ```
 
+## Registering a service (the interactive wizard)
+
+Running `sudo boxstrap` → **Register a new service** walks you through a series of
+prompts. Each has a `[default]` in brackets — press Enter to accept it. Here is
+what every prompt actually means:
+
+| Prompt | Plain English | Example |
+|--------|---------------|---------|
+| **Service name** | A short id for this stack. Becomes the config filename and the name you use in commands (`boxstrap update <name>`). | `contena-crawler-web` |
+| **Git repo URL** | The repo that holds the compose file (NOT the image — the image comes from the registry). boxstrap `git clone`s this to the app dir. | `git@gitlab.com:you/app.git` |
+| **App directory** | Where on the box to put that clone. | `/opt/contena-crawler-web` |
+| **Compose file(s)** | Which compose file(s) to run, space-separated. Usually just the prod one. | `docker-compose.prod.yml` |
+| **Container registry host** | Where the pre-built image lives. You'll enter the username/token for it at deploy time. | `registry.gitlab.com` |
+| **Public domain for TLS** | The domain this app is served on. Blank = no HTTPS front (internal-only). Its DNS must point at the box first (Caddy needs it for the cert). | `crawler.contena.app` |
+| **Front through the shared edge proxy?** | **y** = share one box-wide Caddy with other apps (needed when >1 app is on the box). **N** = this app runs its own Caddy and owns ports 80/443 (only one app per box can). | `y` |
+| **TLS upstream** | Which container:port the proxy forwards to. In **edge** mode it's the app's `boxstrap-edge` network alias; in **caddy** mode it's the compose service name. Both are `name:port`. | `crawler-web:3000` |
+| **Secrets to auto-generate** | Random secrets boxstrap creates for you and writes into the app's `.env`. Format `VAR:hex:N` (N random bytes, hex-encoded), space-separated. Blank = none. | `AUTH0_SECRET:hex:32` |
+| **Secrets to prompt for** | Secrets boxstrap will *ask you to paste* (it can't generate them — they come from elsewhere). Just the variable names, space-separated. | `AUTH0_CLIENT_SECRET CRAWLER_SERVICE_KEY` |
+| **Deploy now?** | **y** to build+start it immediately, or **N** to just save the config and deploy later with `boxstrap deploy <name>`. | `y` |
+
+If you answer **y** to "Deploy now?", a second round of prompts appears during the
+deploy itself:
+
+| Prompt | What to enter |
+|--------|---------------|
+| **Registry username / token** | Credentials that can **pull the image** — a registry deploy token with `read_registry`. Must have access to *this* project's image (a token scoped to a different project won't work). Input is hidden. |
+| **Value for `<SECRET>`** | For each name you listed under "Secrets to prompt for": paste its value. Input is **hidden (nothing shows as you paste)** — that's intentional, like a password prompt. Blank = leave empty and fill into the `.env` later. |
+
+> **Worked example** — the dashboard behind the shared edge proxy:
+> name `contena-crawler-web`, repo the app's git URL, dir `/opt/contena-crawler-web`,
+> compose `docker-compose.prod.yml`, registry `registry.gitlab.com`, domain
+> `crawler.contena.app`, edge? **y**, upstream `crawler-web:3000`, generate
+> `AUTH0_SECRET:hex:32`, prompt `AUTH0_CLIENT_SECRET CRAWLER_SERVICE_KEY`, deploy **y**.
+
+Prefer to script it? Skip the wizard entirely and write a `stacks/<name>.conf`
+(see [`stacks/stack.conf.example`](stacks/stack.conf.example)), then
+`bootstrap.sh --config`.
+
 ## Phases
 
 Run in order; each is idempotent and re-runnable:
