@@ -4,9 +4,13 @@
 
 bs_preflight() {
   [[ -r /etc/os-release ]] || die "cannot read /etc/os-release — unsupported OS"
+  # Read in subshells so os-release's own variables (NAME, VERSION, ID, ...) can
+  # never leak into and clobber boxstrap globals (this once ate a service NAME).
   # shellcheck disable=SC1091
-  source /etc/os-release
-  export BS_OS_ID="${ID:-unknown}" BS_OS_VER="${VERSION_ID:-unknown}"
+  BS_OS_ID="$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}")"
+  # shellcheck disable=SC1091
+  BS_OS_VER="$(. /etc/os-release 2>/dev/null; printf '%s' "${VERSION_ID:-unknown}")"
+  export BS_OS_ID BS_OS_VER
 
   if [[ "$BS_OS_ID" != "ubuntu" ]]; then
     log_warn "boxstrap targets Ubuntu; detected '$BS_OS_ID $BS_OS_VER'. Hardening is Ubuntu-tuned."

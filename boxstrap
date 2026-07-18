@@ -53,13 +53,14 @@ Options:
 EOF
 }
 
-ACTION="" NAME=""
+# Note: use BS_-prefixed names; a bare NAME would be clobbered by /etc/os-release.
+BS_ACTION="" BS_NAME=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) BOXSTRAP_DRY_RUN=true; shift ;;
     -h|--help) usage; exit 0 ;;
     -*)        usage; die "unknown option: $1" ;;
-    *)         if [[ -z "$ACTION" ]]; then ACTION="$1"; else NAME="$1"; fi; shift ;;
+    *)         if [[ -z "$BS_ACTION" ]]; then BS_ACTION="$1"; else BS_NAME="$1"; fi; shift ;;
   esac
 done
 
@@ -126,8 +127,8 @@ main() {
   bs_preflight
 
   # One-shot action mode.
-  if [[ -n "$ACTION" ]]; then
-    bs_run_action "$ACTION" "$NAME"
+  if [[ -n "$BS_ACTION" ]]; then
+    bs_run_action "$BS_ACTION" "$BS_NAME"
     return
   fi
 
