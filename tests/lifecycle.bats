@@ -37,6 +37,21 @@ setup() {
   [[ "$output" == *"docker compose -f docker-compose.prod.yml up -d"* ]]
 }
 
+@test "update --refresh ABORTS when git pull fails (no stale deploy)" {
+  local appdir="$BATS_TEST_TMPDIR/app"; mkdir -p "$appdir"
+  # A git repo with no upstream -> `git pull --ff-only` fails.
+  ( cd "$appdir" && git init -q && git config user.email t@t.co \
+      && git config user.name t && git commit -q --allow-empty -m init )
+  reg_save svc "BOXSTRAP_APP_DIR=\"$appdir\"" 'BOXSTRAP_COMPOSE_FILES="dc.yml"' \
+    'BOXSTRAP_TLS_PROVIDER=caddy' 'BOXSTRAP_DOMAIN="x.example.com"'
+  export BS_REFRESH=true
+  run bs_svc_update svc
+  # Non-zero exit + explicit reason, and it never reached the image pull/up.
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git pull failed"* ]]
+  [[ "$output" == *"stale manifests"* ]]
+}
+
 @test "restart in dry-run prints restart" {
   local appdir="$BATS_TEST_TMPDIR/app"; mkdir -p "$appdir"
   reg_save svc "BOXSTRAP_APP_DIR=\"$appdir\"" 'BOXSTRAP_COMPOSE_FILES="docker-compose.prod.yml"'
