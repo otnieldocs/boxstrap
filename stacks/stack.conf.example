@@ -41,12 +41,33 @@ BOXSTRAP_REGISTRY_HOST="registry.example.com"          # e.g. ghcr.io, registry.
 # BOXSTRAP_SECRETS_PROMPT="PROXY_USERNAME PROXY_PASSWORD"
 
 # ── TLS front door ──────────────────────────────────────────────────────────
-# boxstrap GENERATES the Caddyfile from these — the app repo needn't ship one.
+# Two TLS modes:
+#
+#   caddy (default) — boxstrap GENERATES a per-app Caddyfile and your app's
+#     compose runs its OWN Caddy on :80/:443. Simplest, but only ONE such stack
+#     can exist per box (they'd fight over the host ports).
+#
+#   edge — the stack shares ONE box-wide Caddy (the boxstrap edge proxy) with
+#     every other edge stack, so many apps coexist on :80/:443. boxstrap owns the
+#     edge proxy (a generated compose + aggregate Caddyfile under /opt/boxstrap-edge)
+#     and re-renders it on every deploy/update/remove. Your app runs NO Caddy.
+#     Contract: attach the fronted service to the external `boxstrap-edge` network
+#     with a stable alias, and set BOXSTRAP_TLS_UPSTREAM="<alias>:<port>".
+#
+#       services:
+#         web:
+#           networks:
+#             boxstrap-edge: { aliases: [my-app-web] }
+#       networks:
+#         boxstrap-edge: { external: true }
+#
 BOXSTRAP_TLS_PROVIDER=caddy
 # Point this domain's DNS A-record at the VPS IP BEFORE running (Caddy issues a
 # certificate via an HTTP-01 challenge on port 80).
 BOXSTRAP_DOMAIN="app.example.com"
-BOXSTRAP_TLS_UPSTREAM="api:8000"        # compose service:port Caddy proxies to
+# caddy mode: compose service:port on the app's own network (e.g. api:8000).
+# edge  mode: the shared-network alias:port (e.g. my-app-web:3000).
+BOXSTRAP_TLS_UPSTREAM="api:8000"
 
 # ── Health gate ─────────────────────────────────────────────────────────────
 BOXSTRAP_HEALTH_URL="https://app.example.com/healthz"

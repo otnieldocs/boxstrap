@@ -53,6 +53,9 @@ bs_app_fetch() {
 # break the deploy, and a domain/upstream change is applied on `update --refresh`.
 bs_write_caddyfile() {
   local dir="$1"
+  # Edge-mode stacks don't ship their own Caddy — the shared boxstrap-edge proxy
+  # (lib/48-edge.sh) fronts them, so there is nothing to write in the app dir.
+  [[ "${BOXSTRAP_TLS_PROVIDER:-}" == "edge" ]] && return 0
   [[ "${BOXSTRAP_TLS_PROVIDER:-}" == "caddy" && -n "${BOXSTRAP_DOMAIN:-}" ]] || return 0
   local upstream="${BOXSTRAP_TLS_UPSTREAM:-api:8000}"
   write_file "$dir/Caddyfile" \

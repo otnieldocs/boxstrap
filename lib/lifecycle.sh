@@ -49,6 +49,7 @@ bs_deploy_stack() {
   bs_detect
   bs_kernel_tuning
   bs_app_up
+  bs_edge_phase          # sync the shared proxy if this stack is edge-mode
   bs_verify
 }
 
@@ -83,6 +84,7 @@ _svc_refresh_files() {
     fi
   fi
   bs_write_caddyfile "$dir"
+  bs_edge_phase   # edge-mode: re-render the aggregate proxy config + reload
 }
 
 bs_svc_restart() {
@@ -116,15 +118,21 @@ bs_svc_stop() {
 # bs_svc_remove NAME — unregister a service; optionally stop+remove its
 # containers (named data volumes are preserved).
 bs_svc_remove() {
-  local name="$1"
-  if reg_load "$name" 2>/dev/null && [[ -n "${BOXSTRAP_APP_DIR:-}" && -d "${BOXSTRAP_APP_DIR}" ]]; then
-    local files="${BOXSTRAP_COMPOSE_FILES:-docker-compose.yml}" f
-    BS_COMPOSE_ARGS=()
-    for f in $files; do BS_COMPOSE_ARGS+=(-f "$f"); done
-    if confirm "Also stop & remove '$name' containers now (named data volumes are kept)?"; then
-      _compose down || true
+  local name="$1" was_edge=false
+  if reg_load "$name" 2>/dev/null; then
+    [[ "${BOXSTRAP_TLS_PROVIDER:-}" == "edge" ]] && was_edge=true
+    if [[ -n "${BOXSTRAP_APP_DIR:-}" && -d "${BOXSTRAP_APP_DIR}" ]]; then
+      local files="${BOXSTRAP_COMPOSE_FILES:-docker-compose.yml}" f
+      BS_COMPOSE_ARGS=()
+      for f in $files; do BS_COMPOSE_ARGS+=(-f "$f"); done
+      if confirm "Also stop & remove '$name' containers now (named data volumes are kept)?"; then
+        _compose down || true
+      fi
     fi
   fi
   reg_remove "$name"
+  # Drop this stack's site from the shared proxy now that it is gone from the
+  # registry (bs_edge_sync re-renders from the remaining edge-mode stacks).
+  [[ "$was_edge" == "true" ]] && bs_edge_sync
   log_ok "$name unregistered from boxstrap."
 }
