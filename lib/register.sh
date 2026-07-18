@@ -25,6 +25,19 @@ ensure_host_provisioned() {
   log_ok "Host provisioned."
 }
 
+# bs__tls_lines PROVIDER DOMAIN UPSTREAM — print the TLS-related stack config
+# lines (nothing when DOMAIN is empty). Pure/echo-only so it is unit-testable.
+# PROVIDER is 'caddy' (embedded per-app Caddy) or 'edge' (shared edge proxy).
+bs__tls_lines() {
+  local provider="$1" domain="$2" upstream="$3"
+  [[ -n "$domain" ]] || return 0
+  printf 'BOXSTRAP_TLS_PROVIDER=%s\n' "$provider"
+  printf 'BOXSTRAP_DOMAIN="%s"\n' "$domain"
+  printf 'BOXSTRAP_TLS_UPSTREAM="%s"\n' "$upstream"
+  printf 'BOXSTRAP_HEALTH_URL="https://%s/healthz"\n' "$domain"
+  printf 'BOXSTRAP_HEALTH_EXPECT=\x27"status":"ok"\x27\n'
+}
+
 # bs_register_flow — interactive wizard: collect a service's details, write its
 # stack config, then optionally deploy it. Detects an existing checkout and
 # offers to adopt it (register without re-cloning/redeploying).
@@ -47,7 +60,16 @@ bs_register_flow() {
   prompt compose  "Compose file(s), space-separated" "docker-compose.prod.yml"
   prompt registry "Container registry host" "registry.gitlab.com"
   prompt domain   "Public domain for TLS (blank = no TLS front)" ""
-  prompt upstream "TLS upstream (compose service:port)" "api:8000"
+
+  # TLS mode (only when a domain is set): 'edge' shares one box-wide Caddy across
+  # stacks; 'caddy' embeds a Caddy in this app's own compose (needs :80/:443).
+  local provider="caddy" up_hint="compose service:port"
+  if [[ -n "$domain" ]]; then
+    if confirm "Front '$name' through the shared edge proxy (many apps, one box)? No = its own Caddy on :80/:443."; then
+      provider="edge"; up_hint="shared-network alias:port"
+    fi
+  fi
+  prompt upstream "TLS upstream ($up_hint)" "api:8000"
   prompt gen      "Secrets to auto-generate (VAR:hex:N, space-sep, blank = none)" ""
   prompt prompts  "Secrets to prompt for (VAR names, space-sep, blank = none)" ""
 
@@ -58,20 +80,16 @@ bs_register_flow() {
     "BOXSTRAP_COMPOSE_FILES=\"$compose\""
     "BOXSTRAP_REGISTRY_HOST=\"$registry\""
   )
-  if [[ -n "$domain" ]]; then
-    lines+=(
-      "BOXSTRAP_TLS_PROVIDER=caddy"
-      "BOXSTRAP_DOMAIN=\"$domain\""
-      "BOXSTRAP_TLS_UPSTREAM=\"$upstream\""
-      "BOXSTRAP_HEALTH_URL=\"https://$domain/healthz\""
-      "BOXSTRAP_HEALTH_EXPECT='\"status\":\"ok\"'"
-    )
-  fi
+  local tls_line
+  while IFS= read -r tls_line; do lines+=("$tls_line"); done \
+    < <(bs__tls_lines "$provider" "$domain" "$upstream")
   [[ -n "$gen" ]]     && lines+=("BOXSTRAP_SECRETS_GENERATE=\"$gen\"")
   [[ -n "$prompts" ]] && lines+=("BOXSTRAP_SECRETS_PROMPT=\"$prompts\"")
 
   reg_save "$name" "${lines[@]}"
   log_ok "Registered '$name' -> $(reg_path "$name")"
+  [[ "$provider" == "edge" ]] && log_info \
+    "Edge mode: attach $name's fronted service to the external 'boxstrap-edge' network with alias '${upstream%%:*}' (see stacks/stack.conf.example)."
 
   if [[ "$adopt" == "true" ]]; then
     log_info "Adopted the existing deployment — not redeploying. Manage it from the menu (Slice B)."

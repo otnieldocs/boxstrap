@@ -104,6 +104,10 @@ boxstrap manages a shared **edge proxy**:
 sudo boxstrap edge      # manually re-render + reload the shared proxy
 ```
 
+Registering an edge stack: the interactive wizard asks "front through the shared
+edge proxy?" — answer yes and it writes `BOXSTRAP_TLS_PROVIDER=edge` for you. (Or
+set it directly in the stack config for a scripted `bootstrap.sh --config` run.)
+
 Mixing modes on one box isn't supported — the embedded-Caddy stack and the edge
 proxy would both claim `:80/:443`. Pick `edge` for every fronted stack on a
 shared box, or `caddy` for a single-app box.
