@@ -40,18 +40,24 @@ bs_app_fetch() {
   # 3. Scaffold .env (secrets generated where configured; chmod 600).
   bs__scaffold_env "$dir"
 
-  # 4. Generate the Caddy config from the stack settings. boxstrap owns this, so
-  #    a missing/uncommitted Caddyfile in the app repo can never break the deploy.
-  if [[ "${BOXSTRAP_TLS_PROVIDER:-}" == "caddy" && -n "${BOXSTRAP_DOMAIN:-}" ]]; then
-    local upstream="${BOXSTRAP_TLS_UPSTREAM:-api:8000}"
-    write_file "$dir/Caddyfile" \
-      "$(printf '%s {\n\treverse_proxy %s\n\tencode gzip\n}\n' "$BOXSTRAP_DOMAIN" "$upstream")"
-    log_ok "Generated Caddyfile (${BOXSTRAP_DOMAIN} -> ${upstream})"
-  fi
+  # 4. Generate the Caddy config from the stack settings (boxstrap owns it).
+  bs_write_caddyfile "$dir"
 
   # Own everything as the deploy user LAST — including the .env created above —
   # so the app can read it regardless of which user ends up running compose.
   bs_run chown -R "$user:$user" "$dir"
+}
+
+# bs_write_caddyfile DIR — (re)generate DIR/Caddyfile from the stack's TLS settings.
+# boxstrap owns this file, so a missing/uncommitted Caddyfile in the app repo can never
+# break the deploy, and a domain/upstream change is applied on `update --refresh`.
+bs_write_caddyfile() {
+  local dir="$1"
+  [[ "${BOXSTRAP_TLS_PROVIDER:-}" == "caddy" && -n "${BOXSTRAP_DOMAIN:-}" ]] || return 0
+  local upstream="${BOXSTRAP_TLS_UPSTREAM:-api:8000}"
+  write_file "$dir/Caddyfile" \
+    "$(printf '%s {\n\treverse_proxy %s\n\tencode gzip\n}\n' "$BOXSTRAP_DOMAIN" "$upstream")"
+  log_ok "Generated Caddyfile (${BOXSTRAP_DOMAIN} -> ${upstream})"
 }
 
 # bs__scaffold_env DIR — create DIR/.env from .env.example and fill generated
