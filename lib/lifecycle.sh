@@ -78,25 +78,26 @@ _svc_refresh_files() {
   local dir="$BOXSTRAP_APP_DIR" owner
   if [[ -d "$dir/.git" ]]; then
     owner="$(stat -c '%U' "$dir" 2>/dev/null || echo root)"
-    log_info "Refreshing $1: git pull ($dir, as $owner)"
-    # boxstrap owns the generated Caddyfile and writes it INTO the repo tree, so
-    # discard any local change to it first — otherwise a dirty working tree blocks
-    # the fast-forward pull. It is regenerated below anyway.
-    local pull_cmd="cd '$dir' && { git checkout -- Caddyfile 2>/dev/null || true; } && git pull --ff-only"
+    log_info "Refreshing $1: git pull ($dir)"
+    # Pull as the user boxstrap runs as (root in production). The git deploy key
+    # lives in root's ~/.ssh — that is how the repo was cloned — so pulling as the
+    # dir owner (e.g. 'deploy') fails with 'Host key verification failed' / no key.
+    # safe.directory bypasses git's dubious-ownership guard on the owner's tree;
+    # boxstrap owns + regenerates the Caddyfile, so discard local edits to it first
+    # (they would otherwise block a fast-forward pull). Ownership is restored after.
+    local pull_cmd="cd '$dir' && { git -c safe.directory='$dir' checkout -- Caddyfile 2>/dev/null || true; } && git -c safe.directory='$dir' pull --ff-only"
     local rc=0
     if is_dry; then
-      log "[dry-run] git pull --ff-only in $dir (as $owner)"
-    elif [[ "$(id -un)" == "$owner" ]]; then
-      # Already the owner (also lets this run in tests) — no su needed.
-      bash -c "$pull_cmd" || rc=$?
+      log "[dry-run] git pull --ff-only in $dir"
     else
-      su - "$owner" -c "$pull_cmd" || rc=$?
+      bash -c "$pull_cmd" || rc=$?
+      [[ $rc -eq 0 ]] && { chown -R "$owner:$owner" "$dir" 2>/dev/null || true; }
     fi
     # ABORT on a failed pull — deploying stale manifests silently is the bug this
     # replaces (a failed pull used to only warn, then continue with old files).
     if [[ $rc -ne 0 ]]; then
       log_err "git pull failed in $dir — refusing to deploy stale manifests."
-      log_err "Resolve it (git -C '$dir' status; discard boxstrap-owned files with git -C '$dir' checkout -- .), then retry."
+      log_err "Check the box's git access to the repo (root's SSH deploy key + known_hosts for the host), then retry."
       return 1
     fi
   fi
