@@ -16,14 +16,29 @@ bs_detect() {
   [[ -f "$dir/package.json" ]]     && blob+=" $(tr '[:upper:]' '[:lower:]' < "$dir/package.json")" && found+=("Node.js")
   [[ -f "$dir/go.mod" ]]           && found+=("Go")
 
+  # ⚠️ A DEPLOY repo has no dependency manifests at all — no requirements.txt,
+  # no package.json — because the code ships in the image and the repo holds only
+  # compose files. Manifest-only detection therefore found NOTHING for exactly the
+  # shape of repo boxstrap is built to deploy, silently skipped the host tuning,
+  # and printed "no known dependency manifest" as if that settled it. The images
+  # a compose file pulls describe the stack just as well, so read those too.
+  local cf
+  for cf in ${BOXSTRAP_COMPOSE_FILES:-docker-compose.yml}; do
+    [[ -f "$dir/$cf" ]] || continue
+    blob+=" $(grep -hoE '^[[:space:]]*image:[[:space:]]*[^[:space:]]+' "$dir/$cf" 2>/dev/null \
+              | sed -E 's/^[[:space:]]*image:[[:space:]]*//' | tr '[:upper:]' '[:lower:]')"
+    found+=("compose:$cf")
+  done
+
   printf '%s' "$blob" | grep -qE 'fastapi|uvicorn'          && found+=("FastAPI (ASGI)")
   printf '%s' "$blob" | grep -qE 'django|flask|gunicorn'    && found+=("WSGI web")
   printf '%s' "$blob" | grep -qE '(^| )celery'              && found+=("Celery workers")
-  printf '%s' "$blob" | grep -qE 'psycopg|asyncpg'          && found+=("Postgres client")
+  printf '%s' "$blob" | grep -qE 'psycopg|asyncpg|postgres|pgvector' && found+=("Postgres")
+  printf '%s' "$blob" | grep -qE 'rabbitmq|amqp|kombu'      && found+=("RabbitMQ")
   if printf '%s' "$blob" | grep -qE '(^| )redis'; then
     found+=("Redis"); BS_NEEDS_REDIS_TUNING=true
   fi
-  if printf '%s' "$blob" | grep -qE 'playwright|selenium|puppeteer'; then
+  if printf '%s' "$blob" | grep -qE 'playwright|selenium|puppeteer|chromium|chrome'; then
     found+=("Headless browser"); BS_NEEDS_BROWSER=true
   fi
 
@@ -32,7 +47,10 @@ bs_detect() {
   [[ "${BOXSTRAP_FORCE_BROWSER:-}" == "true" ]]      && BS_NEEDS_BROWSER=true
 
   if [[ ${#found[@]} -eq 0 && "$BS_NEEDS_REDIS_TUNING" != "true" && "$BS_NEEDS_BROWSER" != "true" ]]; then
-    log_warn "No known dependency manifest found in '$dir' — skipping stack detection."
+    log_warn "Nothing recognised in '$dir' — no dependency manifest, and no image: line
+  in ${BOXSTRAP_COMPOSE_FILES:-docker-compose.yml}. Host tuning is being SKIPPED.
+  If this stack runs Redis or a browser, set BOXSTRAP_FORCE_REDIS_TUNING=true /
+  BOXSTRAP_FORCE_BROWSER=true in its config rather than accepting the defaults."
     return 0
   fi
 

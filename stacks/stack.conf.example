@@ -69,6 +69,21 @@ BOXSTRAP_DOMAIN="app.example.com"
 # edge  mode: the shared-network alias:port (e.g. my-app-web:3000).
 BOXSTRAP_TLS_UPSTREAM="api:8000"
 
+# ── Fit preflight (runs after host tuning, before any container starts) ─────
+# Two checks, both guarding failures that are SILENT in production.
+#
+# Memory: sums every mem_limit in the compose file(s) against real RAM + swap.
+# WARNS by default — mem_limit is a ceiling, not a reservation, so declaring more
+# than you have is a legitimate choice for a stack whose services never peak
+# together. Set this to make it refuse to deploy instead.
+# BOXSTRAP_FIT_STRICT=true
+#
+# Environment: every `${VAR}` the compose interpolates with NO default must be
+# set and non-empty in the app's .env. This FAILS the deploy, because Compose
+# will not — it substitutes an empty string and starts the stack anyway.
+# List any variable that is genuinely allowed to be empty:
+# BOXSTRAP_FIT_ALLOW_EMPTY="OPTIONAL_WEBHOOK_URL SOME_DEBUG_FLAG"
+
 # ── Health gate ─────────────────────────────────────────────────────────────
 BOXSTRAP_HEALTH_URL="https://app.example.com/healthz"
 BOXSTRAP_HEALTH_EXPECT='"status":"ok"'

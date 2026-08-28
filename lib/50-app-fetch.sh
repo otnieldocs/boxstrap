@@ -22,9 +22,17 @@ bs_app_fetch() {
     elif printf '%s' "$reg_token" | docker login "$reg" -u "$reg_user" --password-stdin; then
       log_ok "Logged in to $reg"
     else
-      log_warn "docker login to $reg failed — check the username/token"
+      # A failed login used to warn and continue. The deploy then ran on for
+      # another minute — clone, detect, tune — before `compose pull` died with
+      # "denied" or "manifest unknown", which reads like a missing image rather
+      # than a bad credential. Abort at the real cause instead.
+      die "docker login to $reg failed — check the username and token.
+  The token needs read_registry scope and must not have expired.
+  Re-run once it is fixed; every phase before this one is idempotent."
     fi
   else
+    # No token at all is a different case: a stack of PUBLIC images needs none.
+    # Warn, do not abort — the pull will say plainly if a private image is hit.
     log_warn "No registry token provided — 'docker compose pull' may fail for private images."
   fi
 
