@@ -78,6 +78,45 @@ BOXSTRAP_REGISTRY_TOKEN=… sudo -E ./bootstrap.sh \
 sudo ./bootstrap.sh --config stacks/my-app.conf --only kernel-tuning
 ```
 
+## The interactive shell
+
+`sudo boxstrap` with no arguments opens a menu: arrow keys (or `j`/`k`) to move,
+enter to select, `q` to cancel, or type a number to jump straight to an option.
+Each registered service shows its container state inline, so you can see what is
+running without picking one to find out:
+
+```
+  ┌─ boxstrap ────────────────────────────────────
+  │ host provisioned · 2 services
+  └────────────────────────────────────────────
+
+Services
+  ↑/↓ or j/k to move · enter to select · q to cancel
+  ❯ contena-crawler          2/2 up
+    contena-staging          down
+    Register a new service
+    Quit
+```
+
+Three tiers, picked automatically:
+
+1. **[gum](https://github.com/charmbracelet/gum)** if you have installed it.
+2. **boxstrap's own TUI** (`lib/tui.sh`) — pure Bash, no dependency. This is
+   what you get on a fresh VPS, where gum never is already there.
+3. **Plain `read`/`select`** for pipes, CI, dumb terminals, and
+   `--non-interactive` — anywhere a keypress would hang a deploy nobody is
+   watching.
+
+boxstrap does **not** require gum. Making a Go binary mandatory to see a usable
+menu would contradict the "no lock-in, just readable Bash" premise, and tier 2
+exists so the no-gum path is good rather than merely present.
+
+Force tier 3 with `BOXSTRAP_NO_TUI=1` if your terminal misbehaves.
+
+The TUI holds terminal echo off for the whole menu and restores it — along with
+the cursor — on every exit path including Ctrl-C. Leaving someone in a shell
+that shows no cursor and does not echo what they type is not a cosmetic bug.
+
 ## Registering a service (the interactive wizard)
 
 Running `sudo boxstrap` → **Register a new service** walks you through a series of
