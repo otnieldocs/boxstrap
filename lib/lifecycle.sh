@@ -118,6 +118,32 @@ _svc_refresh_files() {
   bs_edge_phase   # edge-mode: re-render the aggregate proxy config + reload
 }
 
+# bs_svc_brief NAME — a one-line container state for the menu: "3/3 up".
+#
+# Deliberately cheap and deliberately silent on failure. It runs once per
+# registered service every time the menu redraws, and a menu that errors or
+# hangs because the Docker socket is busy is worse than a menu without state.
+bs_svc_brief() {
+  local name="$1" total running
+  reg_load "$name" 2>/dev/null || { printf '%s' "unregistered"; return 0; }
+  [[ -n "${BOXSTRAP_APP_DIR:-}" && -d "${BOXSTRAP_APP_DIR}" ]] || { printf '%s' "no app dir"; return 0; }
+  have docker || { printf '%s' "docker missing"; return 0; }
+
+  local files="${BOXSTRAP_COMPOSE_FILES:-docker-compose.yml}" f
+  local -a args=()
+  for f in $files; do args+=(-f "$f"); done
+
+  total="$(cd "$BOXSTRAP_APP_DIR" && docker compose "${args[@]}" ps -q 2>/dev/null | grep -c . || true)"
+  running="$(cd "$BOXSTRAP_APP_DIR" && docker compose "${args[@]}" ps -q --status running 2>/dev/null | grep -c . || true)"
+  [[ -n "$total" ]] || total=0
+  [[ -n "$running" ]] || running=0
+
+  if [[ "$total" -eq 0 ]]; then printf '%s' "down"
+  elif [[ "$running" -eq "$total" ]]; then printf '%s/%s up' "$running" "$total"
+  else printf '%s/%s up' "$running" "$total"
+  fi
+}
+
 bs_svc_restart() {
   _svc_prep "$1" || return 1
   log_step "Restart: $1"

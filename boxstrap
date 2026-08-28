@@ -19,6 +19,7 @@ export BOXSTRAP_NONINTERACTIVE=false
 # shellcheck source=lib/util.sh
 source "$BOXSTRAP_ROOT/lib/util.sh"
 for _f in "$BOXSTRAP_ROOT"/lib/[0-9]*.sh \
+          "$BOXSTRAP_ROOT"/lib/tui.sh \
           "$BOXSTRAP_ROOT"/lib/menu.sh \
           "$BOXSTRAP_ROOT"/lib/registry.sh \
           "$BOXSTRAP_ROOT"/lib/lifecycle.sh \
@@ -104,16 +105,27 @@ bs_main_menu() {
       continue
     fi
 
-    local -a opts=() s
-    for s in "${svcs[@]}"; do opts+=("Manage: $s"); done
+    # Show each service's container state inline. A menu that only lists names
+    # makes you pick one just to find out whether it is running.
+    local -a opts=() s brief pad
+    for s in "${svcs[@]}"; do
+      brief="$(bs_svc_brief "$s" 2>/dev/null || true)"
+      # Trailing space in the format is load-bearing: a name >= 24 chars would
+      # otherwise leave no separator, and "${choice%% *}" below would hand
+      # bs_manage_menu the name with the state string welded onto it.
+      printf -v pad '%-24s ' "$s"
+      opts+=("${pad}${brief}")
+    done
     opts+=("Register a new service" "Quit")
 
     local choice
-    choice="$(menu_choose "boxstrap — pick a service or action" "${opts[@]}")" || break
+    choice="$(menu_choose "Services" "${opts[@]}")" || break
     case "$choice" in
       "Register a new service") bs_register_flow || true ;;
       "Quit")                   break ;;
-      "Manage: "*)              bs_manage_menu "${choice#Manage: }" ;;
+      # Service names come from config filenames and cannot contain spaces, so
+      # the first field is the name regardless of the padding and state suffix.
+      *)                        bs_manage_menu "${choice%% *}" ;;
     esac
   done
 }
@@ -149,8 +161,9 @@ main() {
 
   # Interactive mode.
   local tag=""
-  [[ "$BOXSTRAP_DRY_RUN" == "true" ]] && tag=" (dry-run)"
-  log_step "boxstrap$tag"
+  [[ "$BOXSTRAP_DRY_RUN" == "true" ]] && tag="dry-run — nothing will be changed"
+  tui_banner "$tag"
+  tui_supported || log_step "boxstrap${tag:+ ($tag)}"
   ensure_host_provisioned
   bs_main_menu
   log_ok "Done."
