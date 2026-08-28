@@ -27,17 +27,29 @@ _compose() {
 }
 
 # _svc_health — curl the stack's health URL if one is configured.
+#
+# Retries, deliberately. A single shot fired immediately after `up -d` reports
+# "did not respond yet" for any stack that takes more than a moment to boot —
+# which is every multi-service stack — so the warning appeared on healthy
+# deploys and trained you to ignore it. A warning you always ignore is worse
+# than no warning: it is the one that will be ignored when it is real.
+#
+# The deploy gate (bs_verify) waits ~90s; this is the lighter post-update check,
+# so it waits ~60s and warns rather than failing.
 _svc_health() {
   local url="${BOXSTRAP_HEALTH_URL:-}"
   [[ -n "$url" ]] || return 0
-  if is_dry; then log "[dry-run] curl $url"; return 0; fi
+  if is_dry; then log "[dry-run] curl $url (retrying up to ~60s)"; return 0; fi
   local body
-  body="$(curl -fsS --max-time 5 "$url" 2>/dev/null || true)"
-  if [[ -n "$body" ]]; then
-    log_ok "Health: $body"
-  else
-    log_warn "Health check ($url) did not respond yet — give it a moment after a restart."
-  fi
+  for _ in $(seq 1 20); do
+    body="$(curl -fsS --max-time 5 "$url" 2>/dev/null || true)"
+    if [[ -n "$body" ]]; then
+      log_ok "Health: $body"
+      return 0
+    fi
+    sleep 3
+  done
+  log_warn "Health check ($url) never responded in ~60s — inspect: boxstrap logs ${1:-<name>}"
 }
 
 # bs_deploy_stack NAME — full (re)deploy: fetch code, detect, host-tune, pull+up, verify.
@@ -48,6 +60,7 @@ bs_deploy_stack() {
   bs_app_fetch
   bs_detect
   bs_kernel_tuning
+  bs_fit                 # last cheap "no" before containers start
   bs_app_up
   bs_edge_phase          # sync the shared proxy if this stack is edge-mode
   bs_verify

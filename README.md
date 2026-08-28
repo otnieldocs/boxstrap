@@ -21,15 +21,38 @@ Pages and sets `vm.overcommit_memory=1`, and tells you those exist and what they
 prevent. Ansible would happily run this setup too — but only if *you* already knew to
 write it.
 
-**App-aware capacity preflight (planned).** Before it deploys, boxstrap will
-cross-reference your compose file's resource demands — replica counts, `mem_limit`s,
-browser-worker concurrency — against the box's *actual* RAM, CPU, swap, and
-cgroup/kernel capabilities, and warn you *before* something OOM-kills at 3 a.m.:
+**The `fit` phase (shipped).** Before any container starts, boxstrap asks two
+questions whose wrong answers are both *silent* in production.
 
-- *"Your compose runs 3 Chromium workers ≈ 3 GB, but this box has 2 GB — reduce
-  concurrency or add swap."*
-- *"You set `memswap_limit`, but this kernel has no swap-limit accounting — it
-  won't apply."*
+*Does it fit?* It sums every `mem_limit` in your compose files and compares the
+total against the box's real RAM and swap:
+
+```
+- Declared memory caps: 9344MB across 9 service(s); host has 7847MB RAM + 0MB swap.
+[warn] Declared caps exceed RAM by 1497MB (9344MB vs 7847MB).
+       It also exceeds RAM + swap (7847MB), so swap cannot absorb a peak.
+```
+
+This **warns**; it does not refuse. `mem_limit` is a ceiling, not a reservation,
+so declaring more than you have is a normal and often deliberate way to run a
+stack whose services never peak together. The useful signal is not "this is
+illegal" but "you have no headroom if they do" — and a container OOM is
+invisible to both Sentry and an app-level health check, so nothing else will
+tell you. Set `BOXSTRAP_FIT_STRICT=true` to make it fatal.
+
+*Is it configured?* Every variable your compose interpolates with **no default**
+must be set and non-empty in the app's `.env`. This one **fails the deploy**,
+because Docker Compose will not:
+
+> Compose does not treat a missing variable as an error. It substitutes an
+> **empty string**, prints a warning nobody reads, and starts the stack. The app
+> boots "successfully" with no API key, no database password, no webhook secret,
+> and fails on first use — far from the cause.
+
+`${VAR:-fallback}` is exempt by construction: you supplied a value for the
+missing case. A bare `${VAR}` is a requirement you wrote down. Values that still
+look like an `.env.example` placeholder (`your-key`, `CHANGEME`, `xxxx`) are
+reported separately as a warning — they are set, so nothing fails at boot.
 
 Every other tool deploys exactly what you tell it and lets the box fall over.
 **Nothing else checks whether your app actually fits the server it's landing on.**

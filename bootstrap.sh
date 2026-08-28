@@ -34,7 +34,7 @@ Options:
   --non-interactive    Never prompt; use config values / env only.
   --only PHASE         Run a single phase. One of:
                        preflight system swap hardening docker
-                       app-fetch detect kernel-tuning app-up edge verify
+                       app-fetch detect kernel-tuning fit app-up edge verify
   -h, --help           Show this help.
 EOF
 }
@@ -73,6 +73,7 @@ PHASES=(
   "app-fetch:bs_app_fetch"
   "detect:bs_detect"
   "kernel-tuning:bs_kernel_tuning"
+  "fit:bs_fit"
   "app-up:bs_app_up"
   "edge:bs_edge_phase"
   "verify:bs_verify"
