@@ -42,14 +42,33 @@ bs_hardening() {
   fi
 
   # 4. sshd drop-in (idempotent; we never sed the distro's main config).
+  #
+  # ⚠️ THE FILENAME IS LOAD-BEARING. sshd takes the FIRST occurrence of a
+  # keyword and ignores every later one — the opposite of almost every other
+  # drop-in system, where the last file wins. Ubuntu cloud images ship
+  # /etc/ssh/sshd_config.d/50-cloud-init.conf containing
+  # `PasswordAuthentication yes`, so a file named 99-boxstrap.conf sorted AFTER
+  # it and its `PasswordAuthentication no` was dead text. Verified on a fresh
+  # Ubuntu 24.04 box: the drop-in said no, `sshd -T` said yes.
+  #
+  # Nothing failed and nothing warned. Hardening reported success while leaving
+  # password auth enabled — the exact silent-success shape this tool exists to
+  # avoid. Hence 01-, which sorts before anything the image ships.
   local pw_line="# PasswordAuthentication left unchanged by boxstrap"
   [[ "$disable_pw" == "true" ]] && pw_line="PasswordAuthentication no"
-  write_file /etc/ssh/sshd_config.d/99-boxstrap.conf "\
+  write_file /etc/ssh/sshd_config.d/01-boxstrap.conf "\
 # Managed by boxstrap — do not edit by hand.
+# Named 01- deliberately: sshd honours the FIRST occurrence of a keyword, and
+# the cloud-init drop-in (50-) would otherwise win.
 PermitRootLogin no
 PubkeyAuthentication yes
 ${pw_line}
 "
+  # Remove the old, ineffective 99- file from boxes provisioned before this fix.
+  if [[ -f /etc/ssh/sshd_config.d/99-boxstrap.conf ]]; then
+    log_info "Removing the superseded 99-boxstrap.conf (it sorted after cloud-init and never applied)"
+    bs_run rm -f /etc/ssh/sshd_config.d/99-boxstrap.conf
+  fi
   bs_run systemctl reload ssh 2>/dev/null \
     || bs_run systemctl reload sshd 2>/dev/null \
     || log_warn "could not reload ssh — apply the change manually"
@@ -71,6 +90,19 @@ ${pw_line}
   bs_run apt-get install -y fail2ban
   bs_run systemctl enable --now fail2ban
   log_ok "fail2ban running"
+  # ⚠️ These two settings interact badly for the person running boxstrap: root
+  # login was just disabled, and the natural next move is to check that it was.
+  # Every such check is a failed auth, ssh offers EVERY key in your agent, and
+  # each rejected offer is counted separately — so two or three probes with a
+  # couple of keys loaded crosses the default maxretry of 5 and bans you. The
+  # ban is a REJECT, so it looks exactly like a dead sshd: "Connection refused"
+  # while ICMP still answers. It cost a real debugging session.
+  log_warn "Root SSH is now closed and fail2ban is live. Do NOT test it by running
+  'ssh root@<host>' — each attempt offers every key in your agent, each rejected
+  offer counts toward maxretry (default 5), and you will ban yourself for
+  ~10 minutes. A ban REJECTs, so it looks like a dead daemon, not a ban.
+  Connect as '${user}' instead; if you are already locked out, wait out
+  bantime or clear it from the console with: fail2ban-client unban --all"
 
   # 7. Automatic security updates.
   bs_run apt-get install -y unattended-upgrades
