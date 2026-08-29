@@ -2,6 +2,23 @@
 # Phase: preflight — verify we can run here and detect the environment. The
 # detected facts (OS, virt type, cgroup version) drive later phases.
 
+# bs_virt_detect — set BS_VIRT unless it is already set.
+#
+# ⚠️ Lives outside bs_preflight because two LATER phases read BS_VIRT
+# (bs_swap, bs_kernel_tuning) and `--only <phase>` skips preflight. Under
+# `set -u` that made `--only swap` and `--only kernel-tuning` abort with
+# "BS_VIRT: unbound variable" — and `--only kernel-tuning` is the example the
+# README gives for re-running a single phase. Detection is idempotent and
+# cheap, so the readers call this themselves rather than depending on ordering.
+bs_virt_detect() {
+  [[ -n "${BS_VIRT:-}" ]] && return 0
+  if have systemd-detect-virt; then
+    BS_VIRT="$(systemd-detect-virt 2>/dev/null || true)"
+  fi
+  [[ -n "${BS_VIRT:-}" ]] || BS_VIRT="unknown"
+  export BS_VIRT
+}
+
 bs_preflight() {
   [[ -r /etc/os-release ]] || die "cannot read /etc/os-release — unsupported OS"
   # Read in subshells so os-release's own variables (NAME, VERSION, ID, ...) can
@@ -21,12 +38,7 @@ bs_preflight() {
   esac
 
   # Virtualization decides whether kernel-level tweaks are even possible.
-  if have systemd-detect-virt; then
-    BS_VIRT="$(systemd-detect-virt 2>/dev/null || true)"
-  else
-    BS_VIRT="unknown"
-  fi
-  export BS_VIRT
+  bs_virt_detect
   case "$BS_VIRT" in
     kvm|qemu|none|"")     log_ok "Virtualization: ${BS_VIRT:-bare-metal} (full kernel control)" ;;
     openvz|lxc|lxc-libvirt)

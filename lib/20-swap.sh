@@ -5,6 +5,7 @@
 # capabilities" — that is expected and harmless; mem_limit still caps memory.
 
 bs_swap() {
+  bs_virt_detect   # safe under --only, which skips preflight
   local gb="${BOXSTRAP_SWAP_GB:-4}"
 
   if [[ "$BS_VIRT" == "openvz" || "$BS_VIRT" == "lxc" || "$BS_VIRT" == "lxc-libvirt" ]]; then

@@ -4,6 +4,7 @@
 # kernel is not ours to change, so we skip and say so.
 
 bs_kernel_tuning() {
+  bs_virt_detect   # safe under --only, which skips preflight
   if [[ "${BS_NEEDS_REDIS_TUNING:-false}" != "true" ]]; then
     log_info "No Redis detected — skipping kernel tuning."
     return 0
