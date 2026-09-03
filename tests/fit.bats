@@ -80,6 +80,51 @@ _meminfo() {  # _meminfo RAM_MB SWAP_MB
   [ "$status" -ne 0 ]
 }
 
+@test "capacity: reads \${VAR:-512m} as 512m instead of skipping it" {
+  # ⚠️ The regression this guards: the old value pattern required a digit, so an
+  # interpolated cap did not match and was dropped SILENTLY. On a real staging
+  # box all ten overlay caps vanished and the phase reported the base file's
+  # numbers while printing "Fits in RAM".
+  printf 'services:\n  a:\n    mem_limit: ${A_MEM:-512m}\n  b:\n    mem_limit: ${B_MEM:-2g}\n' > "$APP/docker-compose.yml"
+  _meminfo 8000 0
+  run bs__fit_memory "$APP"
+  [ "$status" -eq 0 ] && [[ "$output" == *"2560MB across 2 service(s)"* ]]
+}
+
+@test "capacity: an overlay overriding a cap is counted ONCE, at the override" {
+  # `-f base -f overlay` resolves to the overlay's value; summing both
+  # double-counts the base.
+  printf 'services:\n  a:\n    mem_limit: 2g\n  b:\n    mem_limit: 1g\n' > "$APP/docker-compose.yml"
+  printf 'services:\n  a:\n    mem_limit: 512m\n' > "$APP/overlay.yml"
+  BOXSTRAP_COMPOSE_FILES="docker-compose.yml overlay.yml"
+  _meminfo 8000 0
+  run bs__fit_memory "$APP"
+  # a=512 (overridden, not 2048+512) + b=1024
+  [ "$status" -eq 0 ] && [[ "$output" == *"1536MB across 2 service(s)"* ]]
+}
+
+@test "capacity: a service only in the overlay is added, not ignored" {
+  printf 'services:\n  a:\n    mem_limit: 1g\n' > "$APP/docker-compose.yml"
+  printf 'services:\n  qa:\n    mem_limit: ${QA_MEM:-2g}\n' > "$APP/overlay.yml"
+  BOXSTRAP_COMPOSE_FILES="docker-compose.yml overlay.yml"
+  _meminfo 8000 0
+  run bs__fit_memory "$APP"
+  [ "$status" -eq 0 ] && [[ "$output" == *"3072MB across 2 service(s)"* ]]
+}
+
+@test "capacity: \${VAR} with no default is REPORTED, never silently dropped" {
+  printf 'services:\n  a:\n    mem_limit: 1g\n  b:\n    mem_limit: ${B_MEM}\n' > "$APP/docker-compose.yml"
+  _meminfo 8000 0
+  run bs__fit_memory "$APP"
+  # ⚠️ Chained with && on purpose: bats 1.13 fails a test only on the LAST
+  # command, so a mid-test assertion that fails is INERT. Verified with a probe.
+  # Written as separate lines, this test passed against the unfixed function.
+  [ "$status" -eq 0 ] \
+    && [[ "$output" == *"1024MB across 1 service(s)"* ]] \
+    && [[ "$output" == *"not statically readable"* ]] \
+    && [[ "$output" == *"b"* ]]
+}
+
 @test "capacity: flags a compose with no mem_limit at all" {
   printf 'services:\n  a:\n    image: redis:7-alpine\n' > "$APP/docker-compose.yml"
   run bs__fit_memory "$APP"

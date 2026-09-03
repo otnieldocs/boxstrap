@@ -46,19 +46,78 @@ bs__fit_mb() {
 # a ceiling, not a reservation, so declaring more than you have is a normal and
 # often deliberate way to run a stack whose services never peak together. The
 # useful signal is not "this is illegal" but "you have no headroom if they do".
+#
+# ⚠️ It reads `${VAR:-512m}` as 512m, and it DEDUPLICATES per service across
+# files, with later files winning. Both matter for the overlay pattern —
+# `-f docker-compose.yml -f docker-compose.staging.yml` — and the old version
+# got both wrong in the same silent direction:
+#
+#   * The value pattern required a DIGIT (`[0-9]+[gGmMkK]?`), so every
+#     `mem_limit: ${STAGING_API_MEM:-1024m}` simply did not match. Measured on
+#     a real staging box: all ten overlay caps were skipped, the phase summed
+#     the base file alone, and reported PRODUCTION's 9600MB for a stack whose
+#     actual declared caps are 6080MB — overstating by 3520MB while printing a
+#     confident "Fits in RAM". The verdict was right by luck, not measurement.
+#   * Without dedupe, an overlay that overrides a cap with a LITERAL is counted
+#     twice — base + override — inflating the total by the base value.
+#
+# A skipped value is now reported as unverifiable rather than dropped. Silence
+# is the one thing this phase must never do: its whole purpose is to catch what
+# Compose will not complain about.
 bs__fit_memory() {
   local dir="$1" files="${BOXSTRAP_COMPOSE_FILES:-docker-compose.yml}"
-  local total=0 count=0 f raw mb
+  local total=0 count=0 f line svc val mb i found
+
+  # bash 3.2 (macOS) has no associative arrays — parallel arrays + a linear
+  # scan. Service counts are small; this is not the hot path.
+  local -a names=() mbs=() unverifiable=()
 
   for f in $files; do
     [[ -f "$dir/$f" ]] || continue
-    while read -r raw; do
-      mb="$(bs__fit_mb "$raw")"
-      [[ -n "$mb" ]] || continue
-      total=$(( total + mb )); count=$(( count + 1 ))
-    done < <(grep -hoE '^[[:space:]]*mem_limit:[[:space:]]*[0-9]+[gGmMkK]?' "$dir/$f" 2>/dev/null \
-             | sed -E 's/^[[:space:]]*mem_limit:[[:space:]]*//')
+    svc=""
+    while IFS= read -r line; do
+      # A service header is exactly two spaces, a name, a colon, end of line.
+      if [[ "$line" =~ ^\ \ ([a-zA-Z0-9._-]+):[[:space:]]*$ ]]; then
+        svc="${BASH_REMATCH[1]}"
+        continue
+      fi
+      [[ "$line" =~ ^[[:space:]]*mem_limit:[[:space:]]*(.+)$ ]] || continue
+      val="${BASH_REMATCH[1]}"
+      val="${val%%#*}"                                  # trailing comment
+      val="$(printf '%s' "$val" | tr -d '"'"'"'[:space:]')"
+
+      if [[ "$val" =~ ^\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]+)\}$ ]]; then
+        val="${BASH_REMATCH[1]}"                        # ${VAR:-512m} -> 512m
+      elif [[ "$val" == \$* ]]; then
+        # ${VAR} with no default: the value lives in .env, which this check does
+        # not read. Name it rather than dropping it.
+        unverifiable+=("${svc:-<unknown>}")
+        continue
+      fi
+
+      mb="$(bs__fit_mb "$val")"
+      [[ -n "$mb" ]] || { unverifiable+=("${svc:-<unknown>}"); continue; }
+
+      # Upsert: a later file overriding the same service replaces its cap,
+      # exactly as `docker compose -f a -f b` resolves it.
+      found=""
+      for (( i = 0; i < ${#names[@]}; i++ )); do
+        if [[ "${names[$i]}" == "${svc:-<unknown>}" ]]; then
+          mbs[$i]="$mb"; found=yes; break
+        fi
+      done
+      [[ -n "$found" ]] || { names+=("${svc:-<unknown>}"); mbs+=("$mb"); }
+    done < "$dir/$f"
   done
+
+  count="${#names[@]}"
+  for (( i = 0; i < count; i++ )); do total=$(( total + ${mbs[$i]} )); done
+
+  if [[ ${#unverifiable[@]} -gt 0 ]]; then
+    log_warn "mem_limit not statically readable for: ${unverifiable[*]}
+  These interpolate a variable with no default, so the real cap lives in .env
+  and is NOT included in the total below. Reported rather than skipped."
+  fi
 
   if [[ "$count" -eq 0 ]]; then
     log_warn "No mem_limit set on any service — one runaway container can take the box down.
